@@ -143,6 +143,19 @@ window._fb = { auth, db, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
   .branch-btn.active { border-left-color: var(--gold); background: rgba(245,158,11,0.18); }
   .branch-divider { height: 1px; background: var(--border); margin: 0 18px 10px; }
 
+  /* BRANCH SCOPE SELECTOR (region > branch) */
+  .branch-select-wrap { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 4px; }
+  .branch-select-btn {
+    width: 100%; text-align: left;
+    background: none; border: none; border-left: 3px solid transparent;
+    color: var(--text); padding: 8px 8px; cursor: pointer; border-radius: 6px;
+    font-family: 'Space Grotesk', sans-serif; font-size: 0.78rem; font-weight: 600;
+    display: flex; align-items: center; gap: 6px;
+    transition: all .15s;
+  }
+  .branch-select-btn:hover { background: var(--surface2); color: var(--accent2); }
+  .branch-select-btn.active { border-left-color: var(--accent2); background: rgba(6,182,212,0.1); color: var(--accent2); }
+
   /* MC COMPARISON TABLE */
   .mc-compare-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
   .mc-compare-table th {
@@ -731,35 +744,74 @@ function showToast(msg, err=false) {
 let selectedMC = null;
 let selectedDSE = null;
 let viewBranch = false;
+let selectedBranch = null; // null = semua branch dalam region
 
-// ── BRANCH NAME ──────────────────────────────────────────────────────────
+// ── REGION / BRANCH NAME ──────────────────────────────────────────────────
+function getRegionName() {
+  const r = DATA.find(r => r.region && r.region.trim());
+  return r ? r.region.trim() : 'Region';
+}
+
+// Kept for backward-compatibility with any old callers
 function getBranchName() {
-  const b = DATA.find(r => r.branch && r.branch.trim());
-  return b ? b.branch.trim() : 'Branch';
+  return selectedBranch || getRegionName();
+}
+
+// Data yang sedang aktif (difilter oleh branch terpilih, atau seluruh region kalau tidak ada yang dipilih)
+function getScopedData() {
+  return selectedBranch ? DATA.filter(r => r.branch === selectedBranch) : DATA;
+}
+
+function selectBranchScope(branch) {
+  selectedBranch = branch;
+  selectedMC = null; selectedDSE = null; viewBranch = false;
+  buildSidebar();
+  renderContent();
+  updateBottomNav();
 }
 
 function updateHeaderSub() {
   const el = document.getElementById('headerSub');
-  if(el) el.textContent = 'IM3 · ' + getBranchName();
+  const label = getRegionName() + (selectedBranch ? ' · ' + selectedBranch : '');
+  if(el) el.textContent = 'IM3 · ' + label;
 }
 
 // ── SIDEBAR ──────────────────────────────────────────────────────────────
 function buildSidebar() {
-  const mcs = [...new Set(DATA.map(r => r.micro_cluster))].sort();
+  const scoped = getScopedData();
+  const mcs = [...new Set(scoped.map(r => r.micro_cluster))].sort();
+  const regionName = getRegionName();
   const branchName = getBranchName();
+  const branches = [...new Set(DATA.map(r => r.branch).filter(Boolean))].sort();
   const sb = document.getElementById('sidebar');
-  let html = `<div class="sidebar-title">Micro Cluster</div>`;
+  let html = `<div class="sidebar-title">${regionName}</div>`;
 
-  // Branch total button
+  // Branch scope selector — hanya tampil kalau data punya lebih dari 1 branch
+  if(branches.length > 1) {
+    html += `<div class="branch-select-wrap">
+      <button class="branch-select-btn ${!selectedBranch?'active':''}" onclick="selectBranchScope(null)">
+        🌐 Semua Branch (Region)
+      </button>
+      ${branches.map(b => `
+        <button class="branch-select-btn ${selectedBranch===b?'active':''}" onclick="selectBranchScope('${b}')">
+          📍 ${b}
+        </button>`).join('')}
+    </div>
+    <div class="branch-divider"></div>`;
+  }
+
+  html += `<div class="sidebar-title">Micro Cluster</div>`;
+
+  // Total button (total Region, atau total Branch yang sedang dipilih)
   html += `<button class="branch-btn ${viewBranch?'active':''}" onclick="selectBranch()">
-    🏢 ${branchName}
+    🏢 ${branchName} — Total
     <span class="mc-badge" style="color:var(--gold);border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.1)">${mcs.length} MC</span>
   </button>
   <div class="branch-divider"></div>`;
 
   mcs.forEach(mc => {
-    const dses = [...new Set(DATA.filter(r => r.micro_cluster===mc && r.dse_code && r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].sort();
-    const outlets = DATA.filter(r => r.micro_cluster===mc).length;
+    const dses = [...new Set(scoped.filter(r => r.micro_cluster===mc && r.dse_code && r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].sort();
+    const outlets = scoped.filter(r => r.micro_cluster===mc).length;
     const isActiveMC = selectedMC === mc;
 
     html += `<div class="mc-group">
@@ -829,19 +881,19 @@ function renderContent() {
 function renderBranchTotal(ct) {
   updateHeaderSub();
   const branchName = getBranchName();
-  const all = DATA;
+  const all = getScopedData();
   const s = sumFields(all);
-  const mcs = [...new Set(DATA.map(r=>r.micro_cluster))].sort();
-  const totalDSE = [...new Set(DATA.filter(r=>r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].length;
+  const mcs = [...new Set(all.map(r=>r.micro_cluster))].sort();
+  const totalDSE = [...new Set(all.filter(r=>r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].length;
 
   ct.innerHTML = `
-    <div class="breadcrumb"><span>🏢 ${branchName} — Total Branch</span></div>
+    <div class="breadcrumb"><span>🏢 ${branchName} — Total</span></div>
     <div class="kpi-section">
-      <div class="section-label">Total Performa Branch · ${branchName}</div>
+      <div class="section-label">Total Performa · ${branchName}</div>
       ${donutHTML(all, all)}
     </div>
     <div class="kpi-section">
-      <div class="section-label">Program Participant — Total Branch</div>
+      <div class="section-label">Program Participant — ${branchName}</div>
       ${programHTML(s, all)}
     </div>
     <div class="section-label">Perbandingan Antar Micro Cluster</div>
@@ -868,7 +920,7 @@ function renderBranchTotal(ct) {
           </thead>
           <tbody>
             ${mcs.map(mc => {
-              const rows = DATA.filter(r=>r.micro_cluster===mc);
+              const rows = all.filter(r=>r.micro_cluster===mc);
               const ms = sumFields(rows);
               const dseCount = [...new Set(rows.filter(r=>r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].length;
               return `<tr onclick="selectMC('${mc}')" style="cursor:pointer">
@@ -1156,14 +1208,15 @@ function badgeOrZero(val, cls) {
 
 function renderOverall(ct) {
   updateHeaderSub();
-  const all = DATA;
+  const all = getScopedData();
   const s = sumFields(all);
-  const mcs = [...new Set(DATA.map(r=>r.micro_cluster))];
+  const mcs = [...new Set(all.map(r=>r.micro_cluster))];
+  const branchName = getBranchName();
 
   ct.innerHTML = `
-    <div class="breadcrumb"><span>🏠 Overview</span></div>
+    <div class="breadcrumb"><span>🏠 Overview · ${branchName}</span></div>
     <div class="kpi-section">
-      <div class="section-label">Performa Sales — Total Branch</div>
+      <div class="section-label">Performa Sales — ${branchName}</div>
       ${donutHTML(all, all)}
     </div>
     <div class="kpi-section">
@@ -1173,7 +1226,7 @@ function renderOverall(ct) {
     <div class="section-label">Per Micro Cluster</div>
     <div class="dse-grid">
       ${mcs.map(mc => {
-        const rows = DATA.filter(r=>r.micro_cluster===mc);
+        const rows = all.filter(r=>r.micro_cluster===mc);
         const ms = sumFields(rows);
         const dseCount = [...new Set(rows.filter(r=>r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].length;
         return `<div class="dse-card" onclick="selectMC('${mc}')">
@@ -1204,7 +1257,7 @@ function renderOverall(ct) {
 
 function renderMCLevel(ct) {
   updateHeaderSub();
-  const rows = DATA.filter(r => r.micro_cluster===selectedMC);
+  const rows = getScopedData().filter(r => r.micro_cluster===selectedMC);
   const s = sumFields(rows);
   const dses = [...new Set(rows.filter(r=>r.dse_code!=='UNASSIGNED').map(r=>r.dse_code))].sort();
 
@@ -1267,7 +1320,7 @@ function renderMCLevel(ct) {
 
 function renderDSELevel(ct) {
   updateHeaderSub();
-  const rows = DATA.filter(r => r.micro_cluster===selectedMC && r.dse_code===selectedDSE);
+  const rows = getScopedData().filter(r => r.micro_cluster===selectedMC && r.dse_code===selectedDSE);
   const s = sumFields(rows);
   const info = DSE_MAP[selectedDSE];
   const nama = info && info.nama && info.nama !== 'nan' ? info.nama : '';
@@ -1397,7 +1450,7 @@ function parseOSALastDate(lines, sep, parseRowFn) {
 // ── CSV UPLOAD ──────────────────────────────────────────────────────────
 // Only these columns are stored — ignore Unnamed and irrelevant columns
 const KEEP_COLS = new Set([
-  'branch','micro_cluster','dse_code','dse_category','outlet_code','outlet_name',
+  'region','branch','micro_cluster','dse_code','dse_category','outlet_code','outlet_name',
   'saldo_mtd','saldo_lmtd','sellin_mtd','sellin_lmtd','ga_mtd','ga_lmtd',
   'tag_n_go_hit','biometric_mtd','seru_hit','cvm_hit','unique_participant_program',
   'lowstock_flag_mtd',
@@ -1443,6 +1496,7 @@ function handleUpload(event) {
         if(!rec.micro_cluster) continue;
         if(!rec.dse_code) rec.dse_code = 'UNASSIGNED';
         // Ensure all required fields exist
+        rec.region = rec.region || '';
         rec.branch = rec.branch || '';
         rec.outlet_code = rec.outlet_code || '';
         rec.outlet_name = rec.outlet_name || '';
@@ -1470,7 +1524,7 @@ function handleUpload(event) {
         if(Object.keys(newDseMap).length > 0) DSE_MAP = newDseMap;
       }
       OSA_DATA = {};
-      selectedMC = null; selectedDSE = null; viewBranch = false;
+      selectedMC = null; selectedDSE = null; viewBranch = false; selectedBranch = null;
       buildSidebar();
       renderContent();
       showToast(`✓ Data diperbarui · ${parsed.length} records`);
@@ -1754,7 +1808,7 @@ async function switchPeriod(period) {
 
   // Reset display
   DATA = []; DSE_MAP = {}; OSA_DATA = {};
-  selectedMC = null; selectedDSE = null; viewBranch = false;
+  selectedMC = null; selectedDSE = null; viewBranch = false; selectedBranch = null;
 
   // Subscribe to main data for this period
   unsubMain = fb.onSnapshot(fb.doc(fb.db, 'periods', period), async snap => {
@@ -1919,9 +1973,11 @@ function updateBottomNav() {
   if(!isMobile()) return;
   const branchBtn   = document.getElementById('bnav-branch');
   const overviewBtn = document.getElementById('bnav-overview');
+  const label       = document.getElementById('bnav-branch-label');
   if(!branchBtn) return;
   branchBtn.classList.toggle('active', viewBranch);
   overviewBtn.classList.toggle('active', !viewBranch && !selectedMC && !selectedDSE);
+  if(label) label.textContent = getBranchName();
 }
 
 function openDrawer() {
@@ -1936,10 +1992,11 @@ function closeDrawer() {
 }
 
 function buildDrawer() {
-  const mcs = [...new Set(DATA.map(r => r.micro_cluster))].sort();
+  const scoped = getScopedData();
+  const mcs = [...new Set(scoped.map(r => r.micro_cluster))].sort();
   let html = '';
   mcs.forEach(mc => {
-    const dses = [...new Set(DATA.filter(r => r.micro_cluster===mc && r.dse_code !== 'UNASSIGNED').map(r=>r.dse_code))].sort();
+    const dses = [...new Set(scoped.filter(r => r.micro_cluster===mc && r.dse_code !== 'UNASSIGNED').map(r=>r.dse_code))].sort();
     const isActiveMC = selectedMC === mc;
     html += `<button class="drawer-mc-btn ${isActiveMC?'active':''}" data-mc="${mc}">
       <span>${mc}</span>
