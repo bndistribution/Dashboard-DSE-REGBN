@@ -1463,6 +1463,28 @@ const NUM_COLS = new Set([
   'Sellin','Salmo'
 ]);
 
+// Parser baris CSV yang menghormati tanda kutip — field yang berisi
+// pemisah (mis. ";") di dalam tanda kutip tidak akan salah terpecah.
+function parseCSVLine(line, sep) {
+  const result = [];
+  let cur = '';
+  let inQuotes = false;
+  for(let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if(ch === '"') {
+      if(inQuotes && line[i+1] === '"') { cur += '"'; i++; }
+      else { inQuotes = !inQuotes; }
+    } else if(ch === sep && !inQuotes) {
+      result.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
 function handleUpload(event) {
   const file = event.target.files[0];
   if(!file) return;
@@ -1474,11 +1496,11 @@ function handleUpload(event) {
       const text = e.target.result.replace(/^\uFEFF/, ''); // remove BOM
       const lines = text.split(/\r?\n/).filter(l=>l.trim());
       const sep = lines[0].includes(';') ? ';' : ',';
-      const headers = lines[0].split(sep).map(h=>h.trim().replace(/"/g,''));
+      const headers = parseCSVLine(lines[0], sep).map(h=>h.trim().replace(/"/g,''));
 
       const parsed = [];
       for(let i=1; i<lines.length; i++) {
-        const vals = lines[i].split(sep);
+        const vals = parseCSVLine(lines[i], sep);
         if(vals.length < 5) continue;
         const rec = {};
         headers.forEach((h, idx) => {
@@ -1486,7 +1508,9 @@ function handleUpload(event) {
           if(!h || h.startsWith('Unnamed') || !KEEP_COLS.has(h)) return;
           let v = (vals[idx] || '').trim().replace(/"/g, '');
           if(NUM_COLS.has(h)) {
-            const n = parseFloat(v.replace(',', '.'));
+            // Angka bisa memakai koma sebagai pemisah ribuan (mis. "151,088,754")
+            // jadi semua koma dihapus, bukan dianggap desimal
+            const n = parseFloat(v.replace(/,/g, ''));
             rec[h] = isNaN(n) ? 0 : n;
           } else {
             // Only store non-empty strings
