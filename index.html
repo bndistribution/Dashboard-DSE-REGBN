@@ -1041,12 +1041,16 @@ function donutHTML(rows, allRows) {
   const gaActual = rows.reduce((s,r) => s + r.ga_mtd, 0);
   const gaHit = rows.filter(r => r.ga_mtd > 0).length;
   const gaLmtd = rows.reduce((s,r) => s + r.ga_lmtd, 0);
-  const gaPct = gaLmtd > 0 ? (gaActual / gaLmtd * 100) : 0;
+  // Growth vs LMTD: (aktual - LMTD) / LMTD * 100 — bukan aktual sebagai % dari LMTD
+  const gaGrowthPct = gaLmtd > 0 ? ((gaActual - gaLmtd) / gaLmtd * 100) : (gaActual > 0 ? 100 : 0);
   const gaOutletPct = pjpCount > 0 ? (gaHit / pjpCount * 100) : 0;
 
   const osaColor = colorByPct(osaPct);
   const sellinColor = colorByPct(sellinPct);
-  const gaColor = colorByPct(gaPct);
+  // GA color reflects growth direction: green when growing vs LMTD, red when declining
+  const gaColor = gaGrowthPct >= 0 ? '#10b981' : '#ef4444';
+  // Ring fill centered at 50% = 0% growth, so the ring stays meaningful for negative growth too
+  const gaFillPct = Math.max(0, Math.min(100, 50 + gaGrowthPct));
 
   // Low stock — lower is better, so color logic is inverted
   const lowCount = pjpOutlets.filter(r => r.lowstock_flag_mtd === 1).length;
@@ -1125,10 +1129,10 @@ function donutHTML(rows, allRows) {
     <div class="donut-card">
       <div class="donut-title">✅ GA (Kartu Aktif)</div>
       <div class="donut-wrap">
-        ${makeDonut(gaPct, gaColor)}
+        ${makeDonut(gaFillPct, gaColor)}
         <div class="donut-center">
-          <div class="donut-pct" style="color:${gaColor}">${gaPct.toFixed(1)}%</div>
-          <div class="donut-label">vs LMTD</div>
+          <div class="donut-pct" style="color:${gaColor}">${gaGrowthPct>=0?'+':''}${gaGrowthPct.toFixed(1)}%</div>
+          <div class="donut-label">Growth vs LMTD</div>
         </div>
       </div>
       <div class="donut-stats">
@@ -1432,41 +1436,39 @@ function setCSVDateFromNow() {
 // Supports multiple formats: '5/17/2026 4:07', '2026-05-21 14:36:04', etc.
 function parseOSALastDate(lines, sep, parseRowFn) {
   const splitRow = parseRowFn || (row => row.split(sep).map(h=>h.trim().replace(/"/g,'')));
-  const headers = splitRow(lines[0]).map(h => h.toLowerCase().trim());
-
-  // New aggregated OSA format (as_of_dt;mth_id;DSE ID;region;branch;id_outlet;osa)
-  // mth_id = period as YYYYMM (e.g. 202607), as_of_dt = day-of-month (e.g. 26)
-  const mthIdx = headers.findIndex(h => h === 'mth_id' || h === 'month_id' || h === 'periode');
-  const asOfIdx = headers.findIndex(h => h === 'as_of_dt' || h === 'as_of_date' || h === 'asofdt');
-  if(mthIdx !== -1) {
+  const headers = splitRow(lines[0]).map(h => h.toLowerCase());
+  const dtIdx = headers.findIndex(h => h === 'datetime' || h === 'date' || h === 'tanggal');
+  if(dtIdx !== -1) {
     for(let i = lines.length - 1; i >= 1; i--) {
       const vals = splitRow(lines[i]);
-      const mthRaw = (vals[mthIdx] || '').replace(/"/g,'').trim();
-      if(!/^\d{6}$/.test(mthRaw)) continue;
-      const year = parseInt(mthRaw.slice(0, 4), 10);
-      const month = parseInt(mthRaw.slice(4, 6), 10);
-      let day = 1;
-      if(asOfIdx !== -1) {
-        const dayRaw = (vals[asOfIdx] || '').replace(/"/g,'').trim();
-        const dayNum = parseInt(dayRaw, 10);
-        if(!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) day = dayNum;
-      }
-      const d = new Date(year, month - 1, day);
+      let raw = (vals[dtIdx] || '').replace(/"/g,'').trim();
+      if(!raw) continue;
+      raw = raw.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(:\d{2})?)/, '$1T$2');
+      const d = new Date(raw);
       if(!isNaN(d.getTime())) return d;
     }
   }
 
-  const dtIdx = headers.findIndex(h => h === 'datetime' || h === 'date' || h === 'tanggal');
-  if(dtIdx === -1) return null;
-
-  for(let i = lines.length - 1; i >= 1; i--) {
-    const vals = splitRow(lines[i]);
-    let raw = (vals[dtIdx] || '').replace(/"/g,'').trim();
-    if(!raw) continue;
-    raw = raw.replace(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(:\d{2})?)/, '$1T$2');
-    const d = new Date(raw);
-    if(!isNaN(d.getTime())) return d;
+  // Some exports (e.g. OSA export) split the date across two columns:
+  // mth_id (YYYYMM, e.g. 202607) and as_of_dt (day of month, e.g. 26)
+  const mthIdx = headers.findIndex(h => h === 'mth_id' || h === 'month_id');
+  const dayIdx = headers.findIndex(h => h === 'as_of_dt' || h === 'as_of_date' || h === 'tanggal_data');
+  if(mthIdx !== -1 && dayIdx !== -1) {
+    for(let i = lines.length - 1; i >= 1; i--) {
+      const vals = splitRow(lines[i]);
+      const mthRaw = (vals[mthIdx] || '').replace(/"/g,'').trim();
+      const dayRaw = (vals[dayIdx] || '').replace(/"/g,'').trim();
+      const mth = parseInt(mthRaw, 10);
+      const day = parseInt(dayRaw, 10);
+      if(!isNaN(mth) && !isNaN(day) && mth > 190000) {
+        const year = Math.floor(mth / 100);
+        const month = mth % 100;
+        const d = new Date(year, month - 1, day);
+        if(!isNaN(d.getTime())) return d;
+      }
+    }
   }
+
   return null;
 }
 
@@ -1610,21 +1612,6 @@ function handleUpload(event) {
 
 // ── OSA UPLOAD ──────────────────────────────────────────────────────────
 // Supports: outlet_code+osa  OR  Credit Party ID+Amount (Salmo transaction format)
-//           OR id_outlet+osa (new aggregated OSA export format)
-//
-// Amount formatting differs between formats:
-//   - Old Salmo transaction export: plain numbers (e.g. "5700")
-//   - New aggregated OSA export: comma-thousands, dash-for-zero
-//     (e.g. " 1,950,000 " = 1950000,  " -   " = 0)
-function parseOSAAmount(raw) {
-  if(raw === undefined || raw === null) return NaN;
-  let v = String(raw).replace(/"/g,'').trim();
-  if(v === '' || v === '-') return NaN;
-  // Strip thousands-separator commas (e.g. "1,950,000" -> "1950000")
-  v = v.replace(/,/g, '');
-  return parseFloat(v);
-}
-
 function handleOSAUpload(event) {
   const file = event.target.files[0];
   if(!file) return;
@@ -1664,8 +1651,8 @@ function handleOSAUpload(event) {
       let codeIdx = -1, amtIdx = -1;
       headersLow.forEach((h, i) => {
         if(h === 'credit party id' || h === 'creditpartyid' ||
-           h === 'id_outlet' || h === 'id outlet' || h === 'outlet_id' ||
            h.includes('outlet_code') || h.includes('outlet code') ||
+           h === 'id_outlet' || h === 'outlet_id' ||
            h === 'code' || h === 'kode') {
           if(codeIdx === -1) codeIdx = i;
         }
@@ -1685,6 +1672,28 @@ function handleOSAUpload(event) {
         return;
       }
 
+      // Parse an amount string that may use "," as a thousands separator
+      // (e.g. "300,000" = 300000, "1,950,000" = 1950000) or as a decimal
+      // separator (e.g. "12,5" = 12.5), and treat "-" / blank as 0.
+      function parseOSAAmount(raw) {
+        let s = (raw||'').replace(/"/g,'').trim();
+        if(s === '' || s === '-') return 0;
+        s = s.replace(/[^0-9.,-]/g, '');
+        const commaCount = (s.match(/,/g)||[]).length;
+        if(commaCount > 1) {
+          s = s.replace(/,/g, ''); // multiple commas = thousands separators
+        } else if(commaCount === 1) {
+          const decimalPart = s.split(',')[1];
+          if(decimalPart && decimalPart.length === 3) {
+            s = s.replace(',', ''); // e.g. "300,000" -> thousands separator
+          } else {
+            s = s.replace(',', '.'); // e.g. "12,5" -> decimal separator
+          }
+        }
+        const n = parseFloat(s);
+        return isNaN(n) ? 0 : n;
+      }
+
       let count = 0;
       const newOSA = {};
       for(let i=1; i<lines.length; i++) {
@@ -1696,7 +1705,7 @@ function handleOSAUpload(event) {
         }
         const code = (vals[codeIdx]||'').replace(/"/g,'').trim();
         const val  = parseOSAAmount(vals[amtIdx]);
-        if(code && !isNaN(val) && val > 0) {
+        if(code && val > 0) {
           newOSA[code] = (newOSA[code]||0) + val;
           count++;
         }
