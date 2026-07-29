@@ -1448,6 +1448,12 @@ function parseOSALastDate(lines, sep, parseRowFn) {
 }
 
 // ── CSV UPLOAD ──────────────────────────────────────────────────────────
+// Some CSV exports use different header names for the same metric.
+// Map those raw header names to the canonical field names used internally.
+const HEADER_ALIAS = {
+  'tag_n_go_biometrik_hit': 'biometric_mtd',
+};
+
 // Only these columns are stored — ignore Unnamed and irrelevant columns
 const KEEP_COLS = new Set([
   'region','branch','micro_cluster','dse_code','dse_category','outlet_code','outlet_name',
@@ -1504,17 +1510,21 @@ function handleUpload(event) {
         if(vals.length < 5) continue;
         const rec = {};
         headers.forEach((h, idx) => {
+          // Translate known alternate header names to their canonical name
+          const canonical = HEADER_ALIAS[h] || h;
           // Skip unnamed or empty column headers
-          if(!h || h.startsWith('Unnamed') || !KEEP_COLS.has(h)) return;
+          if(!canonical || canonical.startsWith('Unnamed') || !KEEP_COLS.has(canonical)) return;
           let v = (vals[idx] || '').trim().replace(/"/g, '');
-          if(NUM_COLS.has(h)) {
+          if(NUM_COLS.has(canonical)) {
             // Angka bisa memakai koma sebagai pemisah ribuan (mis. "151,088,754")
             // jadi semua koma dihapus, bukan dianggap desimal
             const n = parseFloat(v.replace(/,/g, ''));
-            rec[h] = isNaN(n) ? 0 : n;
+            // If this canonical field was already set by an earlier column
+            // (e.g. a duplicate header), keep the larger/most recent numeric value
+            rec[canonical] = isNaN(n) ? (rec[canonical] || 0) : n;
           } else {
             // Only store non-empty strings
-            if(v !== '') rec[h] = v;
+            if(v !== '') rec[canonical] = v;
           }
         });
         if(!rec.micro_cluster) continue;
@@ -1525,6 +1535,16 @@ function handleUpload(event) {
         rec.outlet_code = rec.outlet_code || '';
         rec.outlet_name = rec.outlet_name || '';
         rec.dse_category = rec.dse_category || '';
+        // Program-hit metrics: if a column wasn't present in this CSV export
+        // (e.g. seru_hit / cvm_hit), default to 0 instead of leaving it
+        // undefined — undefined values propagate as NaN through sums.
+        rec.tag_n_go_hit = rec.tag_n_go_hit || 0;
+        rec.biometric_mtd = rec.biometric_mtd || 0;
+        rec.seru_hit = rec.seru_hit || 0;
+        rec.cvm_hit = rec.cvm_hit || 0;
+        if(rec.unique_participant_program === undefined) {
+          rec.unique_participant_program = rec.tag_n_go_hit + rec.biometric_mtd + rec.seru_hit + rec.cvm_hit;
+        }
         parsed.push(rec);
       }
 
