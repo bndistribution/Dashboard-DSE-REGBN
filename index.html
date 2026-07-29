@@ -732,6 +732,9 @@ const delta = (cur, prev) => {
   const pct = ((cur - prev) / prev * 100);
   return pct;
 };
+// Coerces missing/undefined/NaN/non-numeric field values to 0 so that a
+// single incomplete record can never poison an entire running total with NaN.
+const numOr0 = (v) => { const x = Number(v); return isNaN(x) ? 0 : x; };
 
 function showToast(msg, err=false) {
   const t = document.getElementById('toast');
@@ -955,18 +958,19 @@ function renderBranchTotal(ct) {
 }
 
 function sumFields(rows) {
+  const n = numOr0;
   return {
-    saldo_mtd: rows.reduce((s,r)=>s+r.saldo_mtd,0),
-    saldo_lmtd: rows.reduce((s,r)=>s+r.saldo_lmtd,0),
-    sellin_mtd: rows.reduce((s,r)=>s+r.sellin_mtd,0),
-    sellin_lmtd: rows.reduce((s,r)=>s+r.sellin_lmtd,0),
-    ga_mtd: rows.reduce((s,r)=>s+r.ga_mtd,0),
-    ga_lmtd: rows.reduce((s,r)=>s+r.ga_lmtd,0),
-    tag_n_go_hit: rows.reduce((s,r)=>s+r.tag_n_go_hit,0),
-    biometric_mtd: rows.reduce((s,r)=>s+r.biometric_mtd,0),
-    seru_hit: rows.reduce((s,r)=>s+r.seru_hit,0),
-    cvm_hit: rows.reduce((s,r)=>s+r.cvm_hit,0),
-    unique_participant_program: rows.reduce((s,r)=>s+r.unique_participant_program,0),
+    saldo_mtd: rows.reduce((s,r)=>s+n(r.saldo_mtd),0),
+    saldo_lmtd: rows.reduce((s,r)=>s+n(r.saldo_lmtd),0),
+    sellin_mtd: rows.reduce((s,r)=>s+n(r.sellin_mtd),0),
+    sellin_lmtd: rows.reduce((s,r)=>s+n(r.sellin_lmtd),0),
+    ga_mtd: rows.reduce((s,r)=>s+n(r.ga_mtd),0),
+    ga_lmtd: rows.reduce((s,r)=>s+n(r.ga_lmtd),0),
+    tag_n_go_hit: rows.reduce((s,r)=>s+n(r.tag_n_go_hit),0),
+    biometric_mtd: rows.reduce((s,r)=>s+n(r.biometric_mtd),0),
+    seru_hit: rows.reduce((s,r)=>s+n(r.seru_hit),0),
+    cvm_hit: rows.reduce((s,r)=>s+n(r.cvm_hit),0),
+    unique_participant_program: rows.reduce((s,r)=>s+n(r.unique_participant_program),0),
   };
 }
 
@@ -1019,7 +1023,7 @@ function donutHTML(rows, allRows) {
   // Calculate targets from DSE_MAP for rows' DSE codes
   const dseCodes = [...new Set(rows.map(r=>r.dse_code).filter(d=>d!=='UNASSIGNED'))];
   let osaTarget = 0, sellinTarget = 0;
-  dseCodes.forEach(d => { if(DSE_MAP[d]) { osaTarget += DSE_MAP[d].osa_target; sellinTarget += DSE_MAP[d].sellin_target; } });
+  dseCodes.forEach(d => { if(DSE_MAP[d]) { osaTarget += numOr0(DSE_MAP[d].osa_target); sellinTarget += numOr0(DSE_MAP[d].sellin_target); } });
 
   // PJP DSE outlets in this scope
   const pjpOutlets = rows.filter(r => r.dse_category === 'PJP DSE');
@@ -1032,15 +1036,15 @@ function donutHTML(rows, allRows) {
   const osaOutletPct = pjpCount > 0 ? (osaInjected / pjpCount * 100) : 0;
 
   // Sellin actual
-  const sellinActual = rows.reduce((s,r) => s + r.sellin_mtd, 0);
+  const sellinActual = rows.reduce((s,r) => s + numOr0(r.sellin_mtd), 0);
   const sellinHit = rows.filter(r => r.sellin_mtd > 0).length;
   const sellinPct = sellinTarget > 0 ? (sellinActual / sellinTarget * 100) : 0;
   const sellinOutletPct = pjpCount > 0 ? (sellinHit / pjpCount * 100) : 0;
 
   // GA actual
-  const gaActual = rows.reduce((s,r) => s + r.ga_mtd, 0);
+  const gaActual = rows.reduce((s,r) => s + numOr0(r.ga_mtd), 0);
   const gaHit = rows.filter(r => r.ga_mtd > 0).length;
-  const gaLmtd = rows.reduce((s,r) => s + r.ga_lmtd, 0);
+  const gaLmtd = rows.reduce((s,r) => s + numOr0(r.ga_lmtd), 0);
   // Growth vs LMTD: (aktual - LMTD) / LMTD * 100 — bukan aktual sebagai % dari LMTD
   const gaGrowthPct = gaLmtd > 0 ? ((gaActual - gaLmtd) / gaLmtd * 100) : (gaActual > 0 ? 100 : 0);
   const gaOutletPct = pjpCount > 0 ? (gaHit / pjpCount * 100) : 0;
