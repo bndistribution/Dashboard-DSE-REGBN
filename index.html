@@ -1432,7 +1432,30 @@ function setCSVDateFromNow() {
 // Supports multiple formats: '5/17/2026 4:07', '2026-05-21 14:36:04', etc.
 function parseOSALastDate(lines, sep, parseRowFn) {
   const splitRow = parseRowFn || (row => row.split(sep).map(h=>h.trim().replace(/"/g,'')));
-  const headers = splitRow(lines[0]).map(h => h.toLowerCase());
+  const headers = splitRow(lines[0]).map(h => h.toLowerCase().trim());
+
+  // New aggregated OSA format (as_of_dt;mth_id;DSE ID;region;branch;id_outlet;osa)
+  // mth_id = period as YYYYMM (e.g. 202607), as_of_dt = day-of-month (e.g. 26)
+  const mthIdx = headers.findIndex(h => h === 'mth_id' || h === 'month_id' || h === 'periode');
+  const asOfIdx = headers.findIndex(h => h === 'as_of_dt' || h === 'as_of_date' || h === 'asofdt');
+  if(mthIdx !== -1) {
+    for(let i = lines.length - 1; i >= 1; i--) {
+      const vals = splitRow(lines[i]);
+      const mthRaw = (vals[mthIdx] || '').replace(/"/g,'').trim();
+      if(!/^\d{6}$/.test(mthRaw)) continue;
+      const year = parseInt(mthRaw.slice(0, 4), 10);
+      const month = parseInt(mthRaw.slice(4, 6), 10);
+      let day = 1;
+      if(asOfIdx !== -1) {
+        const dayRaw = (vals[asOfIdx] || '').replace(/"/g,'').trim();
+        const dayNum = parseInt(dayRaw, 10);
+        if(!isNaN(dayNum) && dayNum >= 1 && dayNum <= 31) day = dayNum;
+      }
+      const d = new Date(year, month - 1, day);
+      if(!isNaN(d.getTime())) return d;
+    }
+  }
+
   const dtIdx = headers.findIndex(h => h === 'datetime' || h === 'date' || h === 'tanggal');
   if(dtIdx === -1) return null;
 
@@ -1587,6 +1610,21 @@ function handleUpload(event) {
 
 // ── OSA UPLOAD ──────────────────────────────────────────────────────────
 // Supports: outlet_code+osa  OR  Credit Party ID+Amount (Salmo transaction format)
+//           OR id_outlet+osa (new aggregated OSA export format)
+//
+// Amount formatting differs between formats:
+//   - Old Salmo transaction export: plain numbers (e.g. "5700")
+//   - New aggregated OSA export: comma-thousands, dash-for-zero
+//     (e.g. " 1,950,000 " = 1950000,  " -   " = 0)
+function parseOSAAmount(raw) {
+  if(raw === undefined || raw === null) return NaN;
+  let v = String(raw).replace(/"/g,'').trim();
+  if(v === '' || v === '-') return NaN;
+  // Strip thousands-separator commas (e.g. "1,950,000" -> "1950000")
+  v = v.replace(/,/g, '');
+  return parseFloat(v);
+}
+
 function handleOSAUpload(event) {
   const file = event.target.files[0];
   if(!file) return;
@@ -1626,6 +1664,7 @@ function handleOSAUpload(event) {
       let codeIdx = -1, amtIdx = -1;
       headersLow.forEach((h, i) => {
         if(h === 'credit party id' || h === 'creditpartyid' ||
+           h === 'id_outlet' || h === 'id outlet' || h === 'outlet_id' ||
            h.includes('outlet_code') || h.includes('outlet code') ||
            h === 'code' || h === 'kode') {
           if(codeIdx === -1) codeIdx = i;
@@ -1656,7 +1695,7 @@ function handleOSAUpload(event) {
           if(st && st !== 'completed') continue;
         }
         const code = (vals[codeIdx]||'').replace(/"/g,'').trim();
-        const val  = parseFloat((vals[amtIdx]||'').replace(/"/g,'').trim().replace(',','.'));
+        const val  = parseOSAAmount(vals[amtIdx]);
         if(code && !isNaN(val) && val > 0) {
           newOSA[code] = (newOSA[code]||0) + val;
           count++;
