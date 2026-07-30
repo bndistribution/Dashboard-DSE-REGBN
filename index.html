@@ -607,6 +607,79 @@ window._fb = { auth, db, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
   @media (max-width: 768px) {
     .bottom-nav { display: block; }
   }
+  /* ── OUTLET SEARCH BAR ────────────────────────────────────────── */
+  .outlet-search-bar {
+    position: relative;
+    background: var(--surface, #10162a);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 28px;
+  }
+  .outlet-search-wrap {
+    max-width: 480px;
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 14px;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .outlet-search-wrap:focus-within {
+    border-color: var(--accent2);
+    box-shadow: 0 0 0 3px rgba(6,182,212,0.12);
+  }
+  .outlet-search-icon { font-size: 0.85rem; opacity: 0.7; flex-shrink:0; }
+  .outlet-search-wrap input {
+    flex: 1; background: transparent; border: none; outline: none;
+    color: #fff; font-size: 0.82rem; font-family: inherit;
+  }
+  .outlet-search-wrap input::placeholder { color: var(--muted); }
+  .outlet-search-clear {
+    cursor: pointer; color: var(--muted); font-size: 0.75rem;
+    padding: 2px 5px; border-radius: 4px; flex-shrink:0;
+  }
+  .outlet-search-clear:hover { color: #fff; background: rgba(255,255,255,0.08); }
+  .outlet-search-results {
+    position: absolute;
+    top: calc(100% - 4px);
+    left: 28px;
+    width: 480px;
+    max-height: 380px;
+    overflow-y: auto;
+    background: #131a2e;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+    z-index: 50;
+  }
+  .outlet-search-meta {
+    padding: 8px 14px; font-size: 0.65rem; color: var(--muted);
+    border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .outlet-search-item {
+    display: flex; flex-direction: column; gap: 3px;
+    padding: 10px 14px; cursor: pointer;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .outlet-search-item:last-child { border-bottom: none; }
+  .outlet-search-item:hover { background: rgba(6,182,212,0.08); }
+  .outlet-search-item-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .outlet-search-item-name { font-size: 0.8rem; font-weight: 600; color: #fff; }
+  .outlet-search-item-code { font-family: 'JetBrains Mono', monospace; font-size: 0.68rem; color: var(--accent2); flex-shrink:0; }
+  .outlet-search-item-path { font-size: 0.66rem; color: var(--muted); }
+  .outlet-search-item-salmo { font-size: 0.68rem; color: var(--gold); font-family: 'JetBrains Mono', monospace; }
+  .outlet-search-empty { padding: 18px 14px; font-size: 0.75rem; color: var(--muted); text-align: center; }
+  .outlet-row-highlight {
+    animation: outletFlash 1.8s ease-out 1;
+  }
+  @keyframes outletFlash {
+    0%   { background: rgba(6,182,212,0.35); }
+    100% { background: transparent; }
+  }
+  @media (max-width: 900px) {
+    .outlet-search-bar { padding: 10px 16px; }
+    .outlet-search-wrap { max-width: 100%; }
+    .outlet-search-results { left: 16px; width: calc(100% - 32px); }
+  }
 </style>
 </head>
 <body>
@@ -668,6 +741,18 @@ window._fb = { auth, db, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
   </div>
   <input type="file" id="fileInput" accept=".csv" onchange="handleUpload(event)" style="display:none">
   <input type="file" id="osaInput" accept=".csv" onchange="handleOSAUpload(event)" style="display:none">
+</div>
+
+<!-- Outlet Search Bar -->
+<div class="outlet-search-bar">
+  <div class="outlet-search-wrap">
+    <span class="outlet-search-icon">🔍</span>
+    <input type="text" id="outletSearchInput" placeholder="Cari outlet (nama atau kode outlet)..."
+           oninput="handleOutletSearch(this.value)"
+           onfocus="handleOutletSearch(this.value)">
+    <span class="outlet-search-clear" id="outletSearchClearBtn" style="display:none" onclick="clearOutletSearch()">✕</span>
+  </div>
+  <div class="outlet-search-results" id="outletSearchResults" style="display:none"></div>
 </div>
 
 <!-- Period Picker Modal -->
@@ -865,6 +950,136 @@ function selectDSE(dse) {
   renderContent();
   updateBottomNav();
 }
+
+// ── OUTLET SEARCH ──────────────────────────────────────────────────────
+let outletSearchTimer = null;
+
+function handleOutletSearch(rawQuery) {
+  clearTimeout(outletSearchTimer);
+  const clearBtn = document.getElementById('outletSearchClearBtn');
+  if(clearBtn) clearBtn.style.display = rawQuery ? 'flex' : 'none';
+
+  outletSearchTimer = setTimeout(() => {
+    const query = (rawQuery || '').trim().toLowerCase();
+    const resultsEl = document.getElementById('outletSearchResults');
+    if(!resultsEl) return;
+
+    if(query.length < 2) {
+      resultsEl.style.display = 'none';
+      resultsEl.innerHTML = '';
+      return;
+    }
+
+    // Search across ALL data (not just current branch scope) so a manager
+    // can find an outlet even if they're currently drilled into another area.
+    const matches = DATA.filter(r =>
+      (r.outlet_code && r.outlet_code.toLowerCase().includes(query)) ||
+      (r.outlet_name && r.outlet_name.toLowerCase().includes(query))
+    );
+
+    // Rank: exact code match > code startsWith > name startsWith > others
+    matches.sort((a,b) => {
+      const score = r => {
+        const code = (r.outlet_code||'').toLowerCase();
+        const name = (r.outlet_name||'').toLowerCase();
+        if(code === query) return 0;
+        if(code.startsWith(query)) return 1;
+        if(name.startsWith(query)) return 2;
+        return 3;
+      };
+      return score(a) - score(b);
+    });
+
+    const total = matches.length;
+    const top = matches.slice(0, 30);
+
+    if(total === 0) {
+      resultsEl.innerHTML = `<div class="outlet-search-empty">Tidak ada outlet ditemukan untuk "${rawQuery}"</div>`;
+      resultsEl.style.display = 'block';
+      return;
+    }
+
+    resultsEl.innerHTML = `
+      <div class="outlet-search-meta">${total} outlet ditemukan${total > top.length ? ` · menampilkan ${top.length} teratas` : ''}</div>
+      ${top.map(r => {
+        const dseLabel = (DSE_MAP[r.dse_code] && DSE_MAP[r.dse_code].nama && DSE_MAP[r.dse_code].nama !== 'nan')
+          ? DSE_MAP[r.dse_code].nama : r.dse_code;
+        return `
+        <div class="outlet-search-item"
+             data-outlet-code="${escapeAttr(r.outlet_code)}"
+             data-branch="${escapeAttr(r.branch)}"
+             data-mc="${escapeAttr(r.micro_cluster)}"
+             data-dse="${escapeAttr(r.dse_code)}">
+          <div class="outlet-search-item-top">
+            <span class="outlet-search-item-name">${r.outlet_name}</span>
+            <span class="outlet-search-item-code">${r.outlet_code}</span>
+          </div>
+          <div class="outlet-search-item-top">
+            <span class="outlet-search-item-path">${r.branch} › ${r.micro_cluster} › ${dseLabel}</span>
+            <span class="outlet-search-item-salmo">Salmo: ${fmt(r.saldo_mtd)}</span>
+          </div>
+        </div>`;
+      }).join('')}
+    `;
+    resultsEl.style.display = 'block';
+  }, 120);
+}
+
+function escapeAttr(str) {
+  return (str == null ? '' : String(str))
+    .replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Event delegation: clicking a result item navigates to that outlet
+document.addEventListener('click', (e) => {
+  const item = e.target.closest('.outlet-search-item');
+  if(item && item.dataset.outletCode) {
+    goToOutlet(item.dataset.outletCode, item.dataset.branch, item.dataset.mc, item.dataset.dse);
+  }
+});
+
+function clearOutletSearch() {
+  const input = document.getElementById('outletSearchInput');
+  const resultsEl = document.getElementById('outletSearchResults');
+  const clearBtn = document.getElementById('outletSearchClearBtn');
+  if(input) input.value = '';
+  if(resultsEl) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; }
+  if(clearBtn) clearBtn.style.display = 'none';
+}
+
+function goToOutlet(outletCode, branch, mc, dse) {
+  // Navigate the sidebar/content state directly to the outlet's DSE-level table
+  selectedBranch = branch;
+  selectedMC = mc;
+  selectedDSE = dse;
+  viewBranch = false;
+  buildSidebar();
+  renderContent();
+  updateBottomNav();
+
+  const resultsEl = document.getElementById('outletSearchResults');
+  if(resultsEl) resultsEl.style.display = 'none';
+
+  // Wait a tick for the table to render, then scroll to & highlight the row
+  setTimeout(() => {
+    const row = document.querySelector(`tr[data-outlet-code="${CSS.escape(outletCode)}"]`);
+    if(row) {
+      row.scrollIntoView({behavior:'smooth', block:'center'});
+      row.classList.add('outlet-row-highlight');
+      setTimeout(() => row.classList.remove('outlet-row-highlight'), 1900);
+    }
+  }, 60);
+}
+
+// Close the results dropdown when clicking outside the search bar
+document.addEventListener('click', (e) => {
+  const bar = document.querySelector('.outlet-search-bar');
+  if(bar && !bar.contains(e.target)) {
+    const resultsEl = document.getElementById('outletSearchResults');
+    if(resultsEl) resultsEl.style.display = 'none';
+  }
+});
 
 // ── RENDER ──────────────────────────────────────────────────────────────
 function renderContent() {
@@ -1389,7 +1604,7 @@ function renderDSELevel(ct) {
                 ? `<span class="osa-val" style="color:var(--gold)">${fmt(osaVal)}</span>`
                 : `<span class="osa-empty">—</span>`;
               return `
-              <tr style="${rowStyle}">
+              <tr style="${rowStyle}" data-outlet-code="${r.outlet_code}">
                 <td class="mono">${r.outlet_code}</td>
                 <td>${r.outlet_name}${lowSalmo ? ' <span style="font-size:0.6rem;background:rgba(239,68,68,0.15);color:#ef4444;padding:1px 6px;border-radius:4px;font-weight:700;vertical-align:middle">LOW</span>' : ''}</td>
                 <td class="num" style="${salmoStyle}">${fmt(r.saldo_mtd)}</td>
