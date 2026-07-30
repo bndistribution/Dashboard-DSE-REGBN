@@ -1424,8 +1424,7 @@ function setOSADate(d) {
   if(el) el.textContent = fmtDate(d);
   const timeEl = document.getElementById('osaTimeLabel');
   if(timeEl) {
-    timeEl.textContent = d.toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit', hour12:false});
-    timeEl.style.display = 'block';
+    timeEl.style.display = 'none';
   }
 }
 
