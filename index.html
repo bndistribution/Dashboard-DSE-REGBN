@@ -275,14 +275,19 @@ window._fb = { auth, db, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
   }
   .table-title { font-size: 0.82rem; font-weight: 600; }
   .table-count { font-size: 0.7rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-  .table-wrap { overflow-x: auto; }
+  .table-wrap { overflow: auto; max-height: 70vh; }
   table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
   thead th {
     padding: 10px 14px; text-align: left;
     font-size: 0.62rem; text-transform: uppercase; letter-spacing: 1px;
     color: var(--muted); background: var(--surface2);
     font-weight: 600; white-space: nowrap;
+    position: sticky; top: 0; z-index: 5;
   }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--accent2); }
+  thead th .sort-arrow { display: inline-block; margin-left: 4px; font-size: 0.7em; opacity: 0.35; }
+  thead th.sort-active .sort-arrow { opacity: 1; color: var(--accent); }
   tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
   tbody tr:hover { background: var(--surface2); }
   tbody td { padding: 10px 14px; color: var(--text); font-size: 0.78rem; }
@@ -832,6 +837,7 @@ function showToast(msg, err=false) {
 let selectedMC = null;
 let selectedDSE = null;
 let viewBranch = false;
+let outletSort = { key: 'saldo_mtd', dir: 'asc' }; // current sort state for Outlet List table
 let selectedBranch = null; // null = semua branch dalam region
 
 // ── REGION / BRANCH NAME ──────────────────────────────────────────────────
@@ -1541,6 +1547,47 @@ function renderMCLevel(ct) {
     </div>`;
 }
 
+// ── OUTLET TABLE SORTING ──────────────────────────────────────────────
+function outletHeaderCell(key, label, align) {
+  const isActive = outletSort.key === key;
+  const arrow = isActive ? (outletSort.dir === 'asc' ? '▲' : '▼') : '▲';
+  const alignStyle = align === 'left' ? '' : `text-align:${align}`;
+  return `<th class="sortable${isActive ? ' sort-active' : ''}" style="${alignStyle}" onclick="sortOutletsBy('${key}')">${label}<span class="sort-arrow">${arrow}</span></th>`;
+}
+
+function sortOutletsBy(key) {
+  if (outletSort.key === key) {
+    outletSort.dir = outletSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    outletSort.key = key;
+    outletSort.dir = 'asc';
+  }
+  renderContent();
+}
+
+function getOutletSortValue(row, key) {
+  if (key === 'osa') return OSA_DATA[row.outlet_code];
+  return row[key];
+}
+
+function sortOutletRows(rows) {
+  const { key, dir } = outletSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    let va = getOutletSortValue(a, key);
+    let vb = getOutletSortValue(b, key);
+    const aEmpty = va === undefined || va === null || va === '';
+    const bEmpty = vb === undefined || vb === null || vb === '';
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;  // empty values always sink to the bottom
+    if (bEmpty) return -1;
+    if (typeof va === 'string' || typeof vb === 'string') {
+      return String(va).localeCompare(String(vb), 'id', { numeric: true }) * mult;
+    }
+    return (va - vb) * mult;
+  });
+}
+
 function renderDSELevel(ct) {
   updateHeaderSub();
   const rows = getScopedData().filter(r => r.micro_cluster===selectedMC && r.dse_code===selectedDSE);
@@ -1581,21 +1628,21 @@ function renderDSELevel(ct) {
         <table>
           <thead>
             <tr>
-              <th>Outlet Code</th>
-              <th>Outlet Name</th>
-              <th style="text-align:right">Salmo ↑</th>
-              <th style="text-align:right">OSA</th>
-              <th style="text-align:right">Sellin</th>
-              <th style="text-align:right">GA</th>
-              <th style="text-align:center">Tag n' Go</th>
-              <th style="text-align:center">Biometric</th>
-              <th style="text-align:center">SERU</th>
-              <th style="text-align:center">CVM</th>
-              <th style="text-align:center">Participant</th>
+              ${outletHeaderCell('outlet_code', 'Outlet Code', 'left')}
+              ${outletHeaderCell('outlet_name', 'Outlet Name', 'left')}
+              ${outletHeaderCell('saldo_mtd', 'Salmo', 'right')}
+              ${outletHeaderCell('osa', 'OSA', 'right')}
+              ${outletHeaderCell('sellin_mtd', 'Sellin', 'right')}
+              ${outletHeaderCell('ga_mtd', 'GA', 'right')}
+              ${outletHeaderCell('tag_n_go_hit', "Tag n' Go", 'center')}
+              ${outletHeaderCell('biometric_mtd', 'Biometric', 'center')}
+              ${outletHeaderCell('seru_hit', 'SERU', 'center')}
+              ${outletHeaderCell('cvm_hit', 'CVM', 'center')}
+              ${outletHeaderCell('unique_participant_program', 'Participant', 'center')}
             </tr>
           </thead>
           <tbody>
-            ${[...rows].sort((a,b) => a.saldo_mtd - b.saldo_mtd).map(r => {
+            ${sortOutletRows(rows).map(r => {
               const lowSalmo = r.saldo_mtd < 10000;
               const rowStyle = lowSalmo ? 'background:rgba(239,68,68,0.07);border-left:3px solid rgba(239,68,68,0.5);' : '';
               const salmoStyle = lowSalmo ? 'color:#dc2626;font-weight:700;' : 'color:var(--accent2);';
